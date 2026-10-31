@@ -1,0 +1,17 @@
+{
+  "name": "Nebula Core: Multimodal Particle Symphony",
+  "short_name": "Nebula Core",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020905",
+  "theme_color": "#020905",
+  "description": "Simulazione particellare 3D a 20.000 particelle con sintesi pianoforte, riverbero, webcam hand tracking e microfono.",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23020905'/><circle cx='50' cy='50' r='35' fill='none' stroke='%2300ff88' stroke-width='4'/><circle cx='50' cy='50' r='18' fill='%2300e5ff'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Nebula Core: Cyberpunk Audio Swarm & Multimodal Particle Symphony",
+  "description": "Simulazione particellare 3D a 20.000 particelle con preservazione della versione madre V70, 14 versioni armonizzate, pianoforte con riverbero, webcam con hand tracking resiliente, microfono, preset e condivisione video per Instagram e TikTok.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "permissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

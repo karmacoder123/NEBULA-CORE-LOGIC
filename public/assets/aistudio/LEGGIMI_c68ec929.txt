@@ -1,0 +1,30 @@
+NEBULA CORE — cartella pronta per la pubblicazione
+
+CONTENUTO
+  index.html    l'app (v2.20), 225 KB: pagina compressa che si espande da sola all'avvio
+                (serve un browser recente: Safari 16.4+, Chrome 80+, Firefox 113+).
+                La versione leggibile/modificabile è NebulaCore_v2_20_Offline.html (902 KB, non per GitHub web).
+  privacy.html  privacy policy IT/EN (richiesta da Google Play)
+  _headers      permessi camera/microfono/sensori (usato da Cloudflare Pages e Netlify; GitHub Pages lo ignora)
+
+PRIMA DI PUBBLICARE
+  In privacy.html sostituisci [NOME SVILUPPATORE] / [DEVELOPER NAME] e [EMAIL DI CONTATTO]
+  (cerca le parentesi quadre: compaiono in ciascuna delle due lingue).
+
+PUBBLICARE
+  A) GitHub Pages (il più semplice)
+     1. Crea un repository PUBBLICO su github.com
+     2. "Add file > Upload files": carica index.html, privacy.html (e _headers, anche se ignorato)
+     3. Settings > Pages > Source: "Deploy from a branch", branch main, cartella / (root)
+     4. Dopo qualche minuto: https://TUONOME.github.io/NOMEREPO/
+
+  B) Cloudflare Pages (consigliato se punti a un uso commerciale / Google Play)
+     1. dash.cloudflare.com > Workers & Pages > Create > Pages
+     2. "Upload assets": carica questa cartella (o lo zip)
+     3. Ricevi https://NOME.pages.dev
+
+DOPO LA PUBBLICAZIONE
+  - App:           https://TUODOMINIO/
+  - Privacy policy: https://TUODOMINIO/privacy.html  <- questo URL va nella scheda di Google Play Console
+  - Camera/microfono funzionano solo da https:// (non da file locale).
+  - Su iPhone: aprire il link in Safari (non nel browser integrato di WhatsApp/Instagram).
