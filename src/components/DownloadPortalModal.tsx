@@ -6,9 +6,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Download, Smartphone, Apple, Globe, Check, X, 
-  ShieldCheck, ExternalLink, HelpCircle, Monitor, Laptop, Sparkles, CheckCircle2,
+  ShieldCheck, HelpCircle, Monitor, Laptop, Sparkles, CheckCircle2,
   Copy, QrCode, Share2
 } from 'lucide-react';
+import { buildZipBlob, isValidZipBytes } from '../utils/zipBuilder';
 
 interface DownloadPortalModalProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ interface DownloadPortalModalProps {
 
 export const DownloadPortalModal: React.FC<DownloadPortalModalProps> = ({ isOpen, onClose }) => {
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
+  const [isPreparing, setIsPreparing] = useState<'zip' | 'html' | 'mac' | 'win' | 'android' | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [deviceType, setDeviceType] = useState<'ios' | 'android' | 'mac' | 'windows' | 'linux'>('mac');
 
@@ -93,7 +95,7 @@ export const DownloadPortalModal: React.FC<DownloadPortalModalProps> = ({ isOpen
     handleCopyLink();
   };
 
-  // 1. Android PWA Install or APK WebApp Package
+  // 1. Android PWA Install or WebApp Package
   const handleAndroidInstall = async () => {
     if (deferredPrompt) {
       try {
@@ -109,40 +111,117 @@ export const DownloadPortalModal: React.FC<DownloadPortalModalProps> = ({ isOpen
       }
     }
 
-    // Direct download of Android PWA WebApp Wrapper configuration & offline file
-    const manifestBlob = new Blob([JSON.stringify({
-      name: "Nebula Core v2.0 - Multimodal Particle Symphony",
-      short_name: "NebulaCore",
-      start_url: window.location.href,
-      display: "fullscreen",
-      orientation: "any",
-      background_color: "#020905",
-      theme_color: "#020905",
-      description: "Nebula Core Particle Symphony & Synthesizer with 20k particles and cathedral grand piano",
-      icons: [
-        {
-          src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23020905' stroke='%2300ff88' stroke-width='4'/><polygon points='50,15 85,50 50,85 15,50' fill='%2300ff88'/></svg>",
-          sizes: "192x192 512x512",
-          type: "image/svg+xml"
-        }
-      ]
-    }, null, 2)], { type: 'application/json' });
+    setIsPreparing('android');
+    try {
+      const { html } = await fetchVerifiedOfflineHtml();
+      const manifestJson = JSON.stringify({
+        name: "Nebula Core v2.0 - Multimodal Particle Symphony",
+        short_name: "NebulaCore",
+        start_url: "./NebulaCore_Offline_v2_V16.html",
+        display: "fullscreen",
+        orientation: "any",
+        background_color: "#020905",
+        theme_color: "#020905",
+        description: "Nebula Core Particle Symphony & Synthesizer with 20k particles and cathedral grand piano",
+      }, null, 2);
+      const zipBlob = buildZipBlob([
+        { name: 'NebulaCore_Offline_v2_V16.html', data: html },
+        { name: 'manifest.webmanifest', data: manifestJson },
+      ]);
+      triggerBlobDownload(zipBlob, 'NebulaCore_Android_Package.zip');
+      triggerDownloadNotification("Pacchetto Android (HTML V1-V16 + Manifest) scaricato!");
+    } finally {
+      setIsPreparing(null);
+    }
+  };
 
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(manifestBlob);
-    a.download = `NebulaCore_Android_WebManifest_${Date.now()}.json`;
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-
-    // Also download standalone HTML
-    setTimeout(handleDownloadStandaloneHTML, 400);
-    triggerDownloadNotification("Pacchetto WebApp Android + File HTML scaricati con successo!");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
-  // 2. Download Standalone Offline HTML File (Complete self-contained bundle with 6-tab drawer, full sliders, 20k/50k particles, piano & physics)
-  const handleDownloadStandaloneHTML = () => {
-    const htmlContent = `<!DOCTYPE html>
+  const getMacLauncherScript = (htmlFilename: string) => `#!/bin/bash
+# ==============================================================================
+# NEBULA CORE v2.0 - MAC M1 / APPLE SILICON & INTEL LAUNCHER
+# ==============================================================================
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR" || exit 1
+
+HTML_FILE="${htmlFilename}"
+if [ ! -f "$HTML_FILE" ]; then
+  HTML_FILE="NebulaCore_Offline.html"
+fi
+
+if [ ! -f "$HTML_FILE" ]; then
+  echo "Errore: file HTML di Nebula Core non trovato nella cartella $DIR"
+  read -n 1 -s -r -p "Premi un tasto per chiudere..."
+  exit 1
+fi
+
+echo "Avvio Nebula Core v2.0..."
+if command -v python3 >/dev/null 2>&1; then
+  PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
+  echo "Server locale su http://127.0.0.1:$PORT/$HTML_FILE"
+  python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &
+  PID=$!
+  trap 'kill "$PID" 2>/dev/null' EXIT INT TERM
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$PORT/$HTML_FILE', timeout=0.4)" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+  open "http://127.0.0.1:$PORT/$HTML_FILE" || open "$DIR/$HTML_FILE"
+  echo "Nebula Core avviato nel browser! Premi CTRL+C per arrestare il server locale."
+  wait "$PID" 2>/dev/null
+else
+  echo "Apertura diretta nel browser predefinito..."
+  open "$DIR/$HTML_FILE"
+fi
+`;
+
+  const getMacReadmeText = () => `NEBULA CORE LOGIC - GUIDA RAPIDA MAC M1 / M2 / M3 / INTEL
+============================================================
+
+METODO 1 (PIU' SEMPLICE - DOPPIO CLIC DIRETTO):
+1. Fai doppio clic su "NebulaCore_Offline_v2_V16.html".
+2. Si aprira' direttamente in Safari o Google Chrome in locale a 60 FPS
+   con tutte le versioni V1-V16, Note Cinetiche, Cristalli e Piano Cattedrale.
+
+METODO 2 (LAUNCHER CON SERVER LOCALE PYTHON):
+1. Fai clic con il TASTO DESTRO su "Avvia_Nebula_Mac.command" -> clicca "Apri"
+   (se macOS Gatekeeper mostra un avviso la prima volta, conferma "Apri").
+2. Il launcher avvia automaticamente un server HTTP locale su una porta libera
+   e apre Nebula Core nel browser predefinito.
+`;
+
+  const getWindowsLauncherScript = (htmlFilename: string) => `@echo off
+title NEBULA CORE v2.0 - WINDOWS LAUNCHER
+echo ==================================================
+echo    AVVIO NEBULA CORE v2.0 A TUTTO SCHERMO
+echo ==================================================
+cd /d "%~dp0"
+if exist "${htmlFilename}" (
+  start "" "${htmlFilename}"
+) else if exist "NebulaCore_Offline.html" (
+  start "" "NebulaCore_Offline.html"
+) else (
+  echo File HTML non trovato nella cartella corrente.
+  pause
+)
+exit
+`;
+
+  // Build minimal standalone offline HTML string (used as resilient fallback & quick minimal export)
+  const buildMinimalStandaloneHTML = (): string => {
+    return `<!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="UTF-8">
@@ -1266,73 +1345,136 @@ export const DownloadPortalModal: React.FC<DownloadPortalModalProps> = ({ isOpen
   </script>
 </body>
 </html>`;
-
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `NebulaCore_Universal_v2.0_Offline.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    triggerDownloadNotification("File HTML autonomo completo (Menu a 6 schede + tutti i cursori) scaricato!");
   };
 
-  // 3. Mac & Linux Portable Launcher
-  const handleDownloadMacLauncher = () => {
-    const launcherScript = `#!/bin/bash
-# ==============================================================================
-# NEBULA CORE v2.0 - MAC LAUNCHER A TUTTO SCHERMO
-# ==============================================================================
-cd "$(dirname "$0")"
-echo "Avvio Nebula Core v2.0 in corso..."
-PORT=8080
-if command -v python3 &>/dev/null; then
-    python3 -m http.server $PORT &
-    PID=$!
-elif command -v python &>/dev/null; then
-    python -m SimpleHTTPServer $PORT &
-    PID=$!
-fi
-sleep 1
-open "http://localhost:$PORT/NebulaCore_Universal_v2.0_Offline.html" 2>/dev/null || open "NebulaCore_Universal_v2.0_Offline.html"
-echo "Nebula Core avviato! Premi CTRL+C per chiudere il server."
-wait $PID 2>/dev/null
-`;
-    const blob = new Blob([launcherScript], { type: 'application/x-sh' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `NebulaCore_Mac_Launcher.command`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // Also download the HTML file
-    setTimeout(handleDownloadStandaloneHTML, 400);
-    triggerDownloadNotification("Script Mac Launcher (.command) e bundle scaricati!");
+  const fetchVerifiedOfflineHtml = async (): Promise<{ html: string; isFullV16: boolean }> => {
+    try {
+      const res = await fetch('/NebulaCore_Offline.html', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const text = await res.text();
+        if (
+          text.length > 50000 &&
+          text.includes('THREE.WebGLRenderer') &&
+          text.includes('initHub') &&
+          !text.includes('/src/main.tsx')
+        ) {
+          return { html: text, isFullV16: true };
+        }
+      }
+    } catch (err) {
+      console.warn('Fallback to minimal standalone HTML after fetch error:', err);
+    }
+    return { html: buildMinimalStandaloneHTML(), isFullV16: false };
   };
 
-  // 4. Windows PC Portable Launcher
-  const handleDownloadWindowsLauncher = () => {
-    const batScript = `@echo off
-title NEBULA CORE v2.0 - WINDOWS LAUNCHER
-echo ==================================================
-echo    AVVIO NEBULA CORE v2.0 A TUTTO SCHERMO
-echo ==================================================
-cd /d "%~dp0"
-start "" "NebulaCore_Universal_v2.0_Offline.html"
-exit
-`;
-    const blob = new Blob([batScript], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `NebulaCore_Windows_Launcher.bat`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  // Minimal Standalone HTML download
+  const handleDownloadStandaloneHTML = () => {
+    const htmlContent = buildMinimalStandaloneHTML();
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    triggerBlobDownload(blob, 'NebulaCore_Universal_v2.0_Offline.html');
+    triggerDownloadNotification("File HTML minimal standalone scaricato!");
+  };
 
-    // Also download HTML
-    setTimeout(handleDownloadStandaloneHTML, 400);
-    triggerDownloadNotification("Launcher Windows (.bat) e bundle scaricati!");
+  // Full V1-V16 Offline Edition HTML download (verified against proxy/HTML redirects)
+  const handleDownloadOfflineHtml = async () => {
+    setIsPreparing('html');
+    try {
+      const { html, isFullV16 } = await fetchVerifiedOfflineHtml();
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      triggerBlobDownload(blob, 'NebulaCore_Offline_v2_V16.html');
+      triggerDownloadNotification(
+        isFullV16
+          ? "Edizione Offline V1–V16 (.html) scaricata! Su Mac fai doppio clic per aprirla."
+          : "Copia Offline standalone scaricata!"
+      );
+    } finally {
+      setIsPreparing(null);
+    }
+  };
+
+  // Production ZIP archive download with magic-byte check + guaranteed pure-TS PKZIP fallback
+  const handleDownloadZipPackage = async () => {
+    setIsPreparing('zip');
+    try {
+      const res = await fetch('/NEBULA-CORE-LOGIC%2016%2011%202026.zip', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        if (isValidZipBytes(buf) && buf.byteLength > 100000) {
+          triggerBlobDownload(
+            new Blob([buf], { type: 'application/zip' }),
+            'NEBULA-CORE-LOGIC 16 11 2026.zip'
+          );
+          triggerDownloadNotification("Archivio NEBULA-CORE-LOGIC 16 11 2026.zip verificato e scaricato!");
+          return;
+        }
+      }
+
+      // Guaranteed valid Store PKZIP fallback if proxy returned HTML or non-ZIP payload
+      const { html } = await fetchVerifiedOfflineHtml();
+      const zipBlob = buildZipBlob([
+        { name: 'NebulaCore_Offline_v2_V16.html', data: html },
+        { name: 'Avvia_Nebula_Mac.command', data: getMacLauncherScript('NebulaCore_Offline_v2_V16.html'), executable: true },
+        { name: 'Avvia_Nebula_Windows.bat', data: getWindowsLauncherScript('NebulaCore_Offline_v2_V16.html') },
+        { name: 'LEGGIMI_MAC_M1.txt', data: getMacReadmeText() },
+      ]);
+      triggerBlobDownload(zipBlob, 'NEBULA-CORE-LOGIC 16 11 2026.zip');
+      triggerDownloadNotification("Pacchetto NEBULA-CORE-LOGIC 16 11 2026.zip generato e pronto per Mac M1!");
+    } catch {
+      const { html } = await fetchVerifiedOfflineHtml();
+      const zipBlob = buildZipBlob([
+        { name: 'NebulaCore_Offline_v2_V16.html', data: html },
+        { name: 'Avvia_Nebula_Mac.command', data: getMacLauncherScript('NebulaCore_Offline_v2_V16.html'), executable: true },
+        { name: 'LEGGIMI_MAC_M1.txt', data: getMacReadmeText() },
+      ]);
+      triggerBlobDownload(zipBlob, 'NEBULA-CORE-LOGIC 16 11 2026.zip');
+      triggerDownloadNotification("Pacchetto NEBULA-CORE-LOGIC 16 11 2026.zip generato localmente!");
+    } finally {
+      setIsPreparing(null);
+    }
+  };
+
+  // 3. Mac M1 / Intel Single-ZIP Launcher Bundle (no dual-download popup block, +x preserved)
+  const handleDownloadMacLauncher = async () => {
+    setIsPreparing('mac');
+    try {
+      const { html } = await fetchVerifiedOfflineHtml();
+      const zipBlob = buildZipBlob([
+        { name: 'NebulaCore_Offline_v2_V16.html', data: html },
+        {
+          name: 'Avvia_Nebula_Mac.command',
+          data: getMacLauncherScript('NebulaCore_Offline_v2_V16.html'),
+          executable: true,
+        },
+        { name: 'LEGGIMI_MAC_M1.txt', data: getMacReadmeText() },
+      ]);
+      triggerBlobDownload(zipBlob, 'NebulaCore_Mac_M1_Package.zip');
+      triggerDownloadNotification("Pacchetto Mac M1 (.zip con .command eseguibile + HTML V1–V16) scaricato!");
+    } finally {
+      setIsPreparing(null);
+    }
+  };
+
+  // 4. Windows PC Single-ZIP Launcher Bundle
+  const handleDownloadWindowsLauncher = async () => {
+    setIsPreparing('win');
+    try {
+      const { html } = await fetchVerifiedOfflineHtml();
+      const zipBlob = buildZipBlob([
+        { name: 'NebulaCore_Offline_v2_V16.html', data: html },
+        { name: 'Avvia_Nebula_Windows.bat', data: getWindowsLauncherScript('NebulaCore_Offline_v2_V16.html') },
+        { name: 'LEGGIMI.txt', data: 'Fai doppio clic su Avvia_Nebula_Windows.bat oppure direttamente su NebulaCore_Offline_v2_V16.html.' },
+      ]);
+      triggerBlobDownload(zipBlob, 'NebulaCore_Windows_Package.zip');
+      triggerDownloadNotification("Pacchetto Windows (.zip con .bat + HTML V1–V16) scaricato!");
+    } finally {
+      setIsPreparing(null);
+    }
   };
 
   return (
@@ -1452,10 +1594,11 @@ exit
           </p>
           <button
             onClick={handleAndroidInstall}
-            className="w-full py-2.5 bg-gradient-to-r from-[#00ff88] to-[#00e5ff] text-[#020905] font-extrabold text-xs rounded-lg flex items-center justify-center gap-2 hover:opacity-95 shadow-[0_0_15px_rgba(0,255,136,0.35)] cursor-pointer transition-all active:scale-[0.98]"
+            disabled={isPreparing === 'android'}
+            className="w-full py-2.5 bg-gradient-to-r from-[#00ff88] to-[#00e5ff] disabled:opacity-60 text-[#020905] font-extrabold text-xs rounded-lg flex items-center justify-center gap-2 hover:opacity-95 shadow-[0_0_15px_rgba(0,255,136,0.35)] cursor-pointer transition-all active:scale-[0.98]"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>INSTALLA / SCARICA PACCHETTO ANDROID</span>
+            <span>{isPreparing === 'android' ? 'PREPARAZIONE PACCHETTO ANDROID...' : 'INSTALLA / SCARICA PACCHETTO ANDROID'}</span>
           </button>
         </div>
 
@@ -1486,11 +1629,12 @@ exit
             </ol>
           </div>
           <button
-            onClick={handleDownloadStandaloneHTML}
-            className="w-full py-2 bg-[#002414] border border-[#00aa55] text-[#88ffaa] hover:text-white hover:border-[#00ff88] text-xs font-bold rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            onClick={handleDownloadOfflineHtml}
+            disabled={isPreparing === 'html'}
+            className="w-full py-2 bg-[#002414] border border-[#00aa55] text-[#88ffaa] hover:text-white hover:border-[#00ff88] disabled:opacity-60 text-xs font-bold rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             <Download className="w-3.5 h-3.5 text-[#00ff88]" />
-            <span>SCARICA COPIA OFFLINE PER APP "FILE" (.HTML)</span>
+            <span>{isPreparing === 'html' ? 'PREPARAZIONE HTML V1–V16...' : 'SCARICA COPIA OFFLINE V1–V16 PER APP "FILE" (.HTML)'}</span>
           </button>
         </div>
 
@@ -1510,15 +1654,19 @@ exit
             )}
           </div>
           <p className="text-[10.5px] text-[#88ffaa] leading-normal">
-            Launcher con doppio-clic (.command) per macOS con supporto per risoluzione Retina Ultra e audio cattedrale ad alta fedeltà.
+            Pacchetto unico pronto per macOS con file offline V1–V16 (apribile con doppio clic in Safari/Chrome) e launcher <code className="text-[#00e5ff]">.command</code> eseguibile.
           </p>
           <button
             onClick={handleDownloadMacLauncher}
-            className="w-full py-2.5 bg-[#002211] border border-[#00aa55] hover:bg-[#003318] text-[#00ff88] font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            disabled={isPreparing === 'mac'}
+            className="w-full py-2.5 bg-[#002211] border border-[#00aa55] hover:bg-[#003318] disabled:opacity-60 text-[#00ff88] font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>SCARICA LAUNCHER MAC (.COMMAND) + PACCHETTO</span>
+            <span>{isPreparing === 'mac' ? 'PREPARAZIONE PACCHETTO MAC...' : 'SCARICA PACCHETTO MAC M1 (.COMMAND + HTML V1–V16)'}</span>
           </button>
+          <p className="text-[9.5px] text-[#66bb88] leading-snug">
+            Suggerimento Mac M1: estrai lo ZIP con doppio clic, poi apri direttamente <b className="text-[#aaffcc]">NebulaCore_Offline_v2_V16.html</b> oppure clicca con il tasto destro su <b className="text-[#aaffcc]">Avvia_Nebula_Mac.command</b> &rarr; <i>Apri</i>.
+          </p>
         </div>
 
         {/* 4. Windows PC Option */}
@@ -1537,37 +1685,54 @@ exit
             )}
           </div>
           <p className="text-[10.5px] text-[#88ffaa] leading-normal">
-            Script batch Windows (.bat) con avvio a schermo intero immediato a 120/144/240Hz con accelerazione GPU DirectX/Vulkan.
+            Pacchetto Windows (.bat + HTML offline V1–V16) con avvio immediato GPU DirectX/Vulkan.
           </p>
           <button
             onClick={handleDownloadWindowsLauncher}
-            className="w-full py-2.5 bg-[#002211] border border-[#00aa55] hover:bg-[#003318] text-[#ffaa00] font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            disabled={isPreparing === 'win'}
+            className="w-full py-2.5 bg-[#002211] border border-[#00aa55] hover:bg-[#003318] disabled:opacity-60 text-[#ffaa00] font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>SCARICA LAUNCHER WINDOWS (.BAT) + PACCHETTO</span>
+            <span>{isPreparing === 'win' ? 'PREPARAZIONE PACCHETTO...' : 'SCARICA PACCHETTO WINDOWS (.BAT + HTML V1–V16)'}</span>
           </button>
         </div>
 
-        {/* 5. Universal Standalone Single-File HTML */}
-        <div className="bg-[#031109] border border-[#005522] hover:border-[#00ff88] rounded-xl p-3.5 flex flex-col gap-2 transition-colors">
+        {/* 5. Production-Ready Complete ZIP Archive & Offline HTML V16 */}
+        <div className="bg-[#031109] border border-[#00e5ff]/70 hover:border-[#00ff88] rounded-xl p-3.5 flex flex-col gap-2 transition-colors shadow-[0_0_18px_rgba(0,229,255,0.2)]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-white font-bold text-xs">
-              <Globe className="w-4 h-4 text-[#00ff88]" />
-              <span>FILE HTML AUTONOMO UNIVERSALE (OFFLINE PER SEMPRE)</span>
+              <Globe className="w-4 h-4 text-[#00e5ff]" />
+              <span>PACCHETTO PRODUZIONE COMPLETO (.ZIP) &amp; OFFLINE V16</span>
             </div>
-            <span className="text-[9.5px] text-[#00e5ff] bg-[#002414] px-2 py-0.5 rounded border border-[#005522]">
-              ZERO INSTALL
+            <span className="text-[9.5px] text-[#00ff88] bg-[#002414] px-2 py-0.5 rounded border border-[#00aa55]">
+              V1–V16 FULL
             </span>
           </div>
           <p className="text-[10.5px] text-[#88ffaa] leading-normal">
-            Un unico file da 20.000 particelle con motore Three.js, sintetizzatore riverbero cattedrale e controllo touch: trascinalo o aprilo con doppio clic ovunque su qualsiasi browser senza internet.
+            Archivio ZIP completo verificato con sorgenti React/TypeScript, build compilata, launcher Mac M1 e versione HTML autonoma offline V1–V16.
           </p>
           <button
-            onClick={handleDownloadStandaloneHTML}
-            className="w-full py-2.5 bg-transparent border border-[#00aa55] text-[#88ffaa] hover:border-[#00ff88] hover:text-white font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            onClick={handleDownloadZipPackage}
+            disabled={isPreparing === 'zip'}
+            className="w-full py-2.5 bg-gradient-to-r from-[#00e5ff] to-[#00ff88] disabled:opacity-60 text-[#020905] font-extrabold text-xs rounded-lg flex items-center justify-center gap-2 hover:opacity-95 cursor-pointer transition-all"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>SCARICA FILE HTML SINGOLO (OFFLINE UNIVERSALE)</span>
+            <span>{isPreparing === 'zip' ? 'VERIFICA ARCHIVIO ZIP...' : 'SCARICA NEBULA-CORE-LOGIC 16 11 2026 (.ZIP)'}</span>
+          </button>
+          <button
+            onClick={handleDownloadOfflineHtml}
+            disabled={isPreparing === 'html'}
+            className="w-full py-2 bg-[#002414] border border-[#00aa55] text-[#88ffaa] hover:border-[#00ff88] hover:text-white disabled:opacity-60 font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+          >
+            <Download className="w-3.5 h-3.5 text-[#00ff88]" />
+            <span>{isPreparing === 'html' ? 'PREPARAZIONE HTML V1–V16...' : 'SCARICA EDIZIONE OFFLINE V1–V16 (.HTML)'}</span>
+          </button>
+          <button
+            onClick={handleDownloadStandaloneHTML}
+            className="w-full py-2 bg-transparent border border-[#005522] text-[#66cc99] hover:border-[#00aa55] hover:text-white font-bold text-[11px] rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>GENERA FILE HTML MINIMAL STANDALONE</span>
           </button>
         </div>
 

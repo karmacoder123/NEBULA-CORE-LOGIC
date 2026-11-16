@@ -66,6 +66,39 @@ export const FACTORY_PRESETS: CustomPreset[] = [
       wanderOrbit: 0.5,
       spectraOrbit: 0.9
     }
+  },
+  {
+    id: 'factory-v15-filamenti',
+    name: 'Filamenti Plasma (V15)',
+    version: 'V15',
+    created: 1700000004000,
+    params: {
+      friction: 0.95,
+      elasticity: 0.0014,
+      pSize: 2.6,
+      pLumina: 80,
+      trailOpacity: 0.08,
+      motionBlur: 0.08,
+      wanderOrbit: 0.9,
+      spectraOrbit: 1.3
+    }
+  },
+  {
+    id: 'factory-v16-globuli',
+    name: 'Globuli Lead Trance (V16)',
+    version: 'V16',
+    created: 1700000005000,
+    params: {
+      friction: 0.94,
+      elasticity: 0.0016,
+      pSize: 3.6,
+      pLumina: 85,
+      trailOpacity: 0.14,
+      motionBlur: 0.14,
+      globuleLeadOn: true,
+      globuleLeadLevel: 0.55,
+      globuleLeadBpm: 128
+    }
   }
 ];
 

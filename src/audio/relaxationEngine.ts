@@ -1,646 +1,633 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { EngineMode, SimulationParams, CustomPreset, GeometryType } from './types.ts';
-import { SacredMotherEngine } from './engine/sacredMother.ts';
-import { RemasteredEngine, REMASTERED_KEYS } from './engine/remasteredEngine.ts';
-import { PipPreview } from './components/PipPreview.tsx';
-import { PianoRibbon } from './components/PianoRibbon.tsx';
-import { ConsolePanel } from './components/ConsolePanel.tsx';
-import { SleepStudioPanel } from './components/SleepStudioPanel.tsx';
-import { PresetModal } from './components/PresetModal.tsx';
-import { RecordingModal } from './components/RecordingModal.tsx';
-import { DownloadPortalModal } from './components/DownloadPortalModal.tsx';
-import { globalPiano } from './audio/pianoEngine.ts';
-import { globalHandTracker, HandTrackingResult } from './vision/handTracker.ts';
-import { globalVideoRecorder, RecordedSession } from './utils/videoRecorder.ts';
-import { 
-  Camera, Mic, Video, Square, Sparkles, 
-  RotateCcw, Sliders, Shield, Zap, Maximize, Minimize, Download, Radio
-} from 'lucide-react';
+/**
+ * @license
+ * SPDX-License-Identifier: MIT
+ * Unified Zen & Sleep Continuous Audio Engine for Nebula Core
+ */
 
-export default function App() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+import { globalPiano } from './pianoEngine';
 
-  // Engine instance refs
-  const motherEngineRef = useRef<SacredMotherEngine | null>(null);
-  const remasteredEngineRef = useRef<RemasteredEngine | null>(null);
+export type NoiseMode = 'OFF' | 'BROWN' | 'PINK' | 'WHITE';
+export type ZenPresetId = 'DELTA_BROWN' | 'HZ_432' | 'HZ_528' | 'BOWL_THETA';
 
-  // State
-  const [engineMode, setEngineMode] = useState<EngineMode>('REMASTERED');
-  const [currentV, setCurrentV] = useState<string>('V13');
-  const [currentGeoType, setCurrentGeoType] = useState<GeometryType>('octa');
-  const [isCycleActive, setIsCycleActive] = useState<boolean>(false);
-  const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
-  const [isMicActive, setIsMicActive] = useState<boolean>(false);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [recordSeconds, setRecordSeconds] = useState<number>(0);
-  const [recordedSession, setRecordedSession] = useState<RecordedSession | null>(null);
-  const [isPresetModalOpen, setIsPresetModalOpen] = useState<boolean>(false);
-  const [isDownloadPortalOpen, setIsDownloadPortalOpen] = useState<boolean>(false);
-  const [activeNoteIdx, setActiveNoteIdx] = useState<number | null>(null);
-  const [isMidiConnected, setIsMidiConnected] = useState<boolean>(false);
-  const [midiName, setMidiName] = useState<string>("Disconnesso");
-
-  const [simulationParams, setSimulationParams] = useState<SimulationParams>({
-    friction: 0.96,
-    elasticity: 0.0016,
-    handPower: 5.5,
-    zoom: 600,
-    rotX: 0.001,
-    rotY: 0.002,
-    rotZ: 0.000,
-    pSpin: 1.2,
-    trailOpacity: 0.14,
-    motionBlur: 0.14,
-    bloomIntensity: 1.0,
-    hueRotationSpeed: 1.0,
-    pSize: 3.2,
-    pLumina: 10.0,
-    audioThreshold: 0.12,
-    cycleTime: 5.0,
-    spectraPull: 45.0,
-    audioPower: 1.5,
-    wanderOrbit: 0.8,
-    spectraOrbit: 1.2,
-    wanderPush: 25.0,
-    sunX: 400,
-    sunY: 600,
-    sunZ: 500,
-    sunIntensity: 1.2,
-    ambientIntensity: 0.6,
-    particleCount: 12000,
-    touchMode: 'ATTRACT',
-    audioMode: 'SYNTH',
-    pianoVolume: 0.8,
-    reverbAmount: 0.65,
-    pianoBrightness: 0.75,
-    triggerRateMs: 160,
-    triggerSensitivity: 0.75,
-    trigGesture: true,
-    trigPinch: true,
-    trigClick: true,
-    trigCollision: false,
-    trigBpm: false,
-    particleBrightness: 0.48,
-    particleSaturation: 0.95,
-    particleShininess: 20,
-    radialExpansion: 8.0,
-    centerAttraction: 2.0
-  });
-
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<{ text: string; isError?: boolean } | null>(null);
-
-  const triggerToast = (text: string, isError = false) => {
-    setToastMessage({ text, isError });
-    setTimeout(() => setToastMessage(null), 4000);
-  };
-
-  // Auto-load preset on initial mount and check download portal deep link
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('nebula_core_autosaved_preset');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.params) {
-          setSimulationParams(prev => ({ ...prev, ...parsed.params }));
-          if (parsed.version) setCurrentV(parsed.version);
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to load auto-saved preset", e);
-    }
-
-    const checkDownloadPortalLink = () => {
-      const hash = window.location.hash.toLowerCase();
-      const params = new URLSearchParams(window.location.search);
-      if (hash.includes('download') || params.get('download') !== null || params.get('portal') === 'download') {
-        setIsDownloadPortalOpen(true);
-      }
-    };
-    checkDownloadPortalLink();
-    window.addEventListener('hashchange', checkDownloadPortalLink);
-    return () => window.removeEventListener('hashchange', checkDownloadPortalLink);
-  }, []);
-
-  const handleToggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
-      }
-    }
-  };
-
-  // Connect piano note trigger callback to UI highlighting & MIDI listeners
-  useEffect(() => {
-    globalPiano.onNoteTrigger = (_name, idx, _freq) => {
-      setActiveNoteIdx(idx);
-      globalHandTracker.activeNote = `${_name} [${Math.round(_freq)}Hz]`;
-    };
-    globalPiano.onMidiStatusChange = (connected, name) => {
-      setIsMidiConnected(connected);
-      setMidiName(name);
-    };
-    globalPiano.initMidi().then(ok => {
-      setIsMidiConnected(ok);
-      setMidiName(globalPiano.midiDeviceName);
-    }).catch(() => {});
-  }, []);
-
-  // Mount active 3D Engine
-  const startEngine = useCallback((mode: EngineMode) => {
-    if (!containerRef.current) return;
-
-    // Teardown previous engine
-    if (motherEngineRef.current) {
-      motherEngineRef.current.unmount();
-      motherEngineRef.current = null;
-    }
-    if (remasteredEngineRef.current) {
-      remasteredEngineRef.current.unmount();
-      remasteredEngineRef.current = null;
-    }
-
-    if (mode === 'MOTHER') {
-      const mother = new SacredMotherEngine();
-      mother.mount(containerRef.current);
-      motherEngineRef.current = mother;
-      setCurrentV(mother.currentV);
-    } else {
-      const remastered = new RemasteredEngine();
-      remastered.liveParams = { ...simulationParams };
-      remastered.mount(containerRef.current);
-      remasteredEngineRef.current = remastered;
-      setCurrentV(remastered.currentV);
-      setCurrentGeoType(remastered.currentGeoType);
-    }
-  }, [simulationParams]);
-
-  useEffect(() => {
-    startEngine(engineMode);
-    return () => {
-      if (motherEngineRef.current) motherEngineRef.current.unmount();
-      if (remasteredEngineRef.current) remasteredEngineRef.current.unmount();
-    };
-  }, [engineMode, startEngine]);
-
-  // Connect hand tracking stream to active engine and piano
-  useEffect(() => {
-    globalHandTracker.onTrackingResult = (res: HandTrackingResult) => {
-      if (engineMode === 'MOTHER' && motherEngineRef.current) {
-        motherEngineRef.current.setHandTarget(res.targetPos.x, res.targetPos.y, res.isClosed, res.isPresent);
-      } else if (remasteredEngineRef.current) {
-        remasteredEngineRef.current.setHandTarget(res.targetPos.x, res.targetPos.y, res.isClosed, res.isPresent);
-      }
-
-      if (res.isPresent && simulationParams.audioMode !== 'OFF') {
-        globalPiano.updateFromCoordinates(res.normX, res.normY, res.isClosed, {
-          trigGesture: simulationParams.trigGesture,
-          trigPinch: simulationParams.trigPinch
-        });
-      }
-    };
-  }, [engineMode, simulationParams.audioMode, simulationParams.trigGesture, simulationParams.trigPinch]);
-
-  // Recording Timer
-  useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
-    if (isRecording) {
-      timer = setInterval(() => {
-        setRecordSeconds(s => s + 1);
-      }, 1000);
-    } else {
-      setRecordSeconds(0);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isRecording]);
-
-  // Keyboard shortcut listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'KeyM') {
-        setEngineMode(m => (m === 'MOTHER' ? 'REMASTERED' : 'MOTHER'));
-      } else if (e.code === 'KeyW') {
-        setIsWebcamActive(a => !a);
-      } else if (e.code === 'KeyC') {
-        handleToggleCycle();
-      } else if (e.code === 'KeyR' && e.shiftKey) {
-        handleResetCamera();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Handlers
-  const handleUpdateParams = (newParams: Partial<SimulationParams>) => {
-    const merged = { ...simulationParams, ...newParams };
-    setSimulationParams(merged);
-
-    if (remasteredEngineRef.current) {
-      remasteredEngineRef.current.liveParams = { ...merged };
-      if (newParams.particleCount && newParams.particleCount !== simulationParams.particleCount) {
-        remasteredEngineRef.current.allocSwarmBuffers(newParams.particleCount);
-        remasteredEngineRef.current.loadSwarm(remasteredEngineRef.current.currentV);
-      }
-      if (newParams.sunX !== undefined || newParams.sunY !== undefined || newParams.sunZ !== undefined || newParams.sunIntensity !== undefined || newParams.ambientIntensity !== undefined) {
-        remasteredEngineRef.current.applySunLights();
-      }
-      if (newParams.pSize !== undefined) {
-        remasteredEngineRef.current.loadSwarm(remasteredEngineRef.current.currentV);
-      }
-      if (newParams.particleShininess !== undefined) {
-        remasteredEngineRef.current.updateShininess(newParams.particleShininess);
-      }
-      if (newParams.zoom !== undefined) {
-        remasteredEngineRef.current.setZoom(newParams.zoom);
-      }
-    } else if (engineMode === 'MOTHER' && motherEngineRef.current?.camera && newParams.zoom !== undefined) {
-      motherEngineRef.current.camera.position.z = newParams.zoom;
-    }
-  };
-
-  const handleSelectVersion = (v: string) => {
-    setCurrentV(v);
-    if (engineMode === 'MOTHER' && motherEngineRef.current) {
-      motherEngineRef.current.loadSwarm(v);
-    } else if (remasteredEngineRef.current) {
-      remasteredEngineRef.current.loadSwarm(v);
-    }
-  };
-
-  const handleToggleCycle = () => {
-    const nextState = !isCycleActive;
-    setIsCycleActive(nextState);
-    if (engineMode === 'MOTHER' && motherEngineRef.current) {
-      motherEngineRef.current.cycleActive = nextState;
-    } else if (remasteredEngineRef.current) {
-      remasteredEngineRef.current.cycleActive = nextState;
-    }
-  };
-
-  const handleToggleWebcam = async () => {
-    globalPiano.resume();
-    const next = !isWebcamActive;
-    setIsWebcamActive(next);
-    if (next) {
-      triggerToast("AVVIO WEBCAM PIP (Hand tracking attivo / Virtual pad)");
-    } else {
-      triggerToast("WEBCAM CHIUSA");
-    }
-  };
-
-  const handleToggleMic = async () => {
-    globalPiano.resume();
-    const activeEngine = engineMode === 'MOTHER' ? motherEngineRef.current : remasteredEngineRef.current;
-    if (activeEngine) {
-      if (!isMicActive) {
-        const ok = await activeEngine.startMicrophone();
-        setIsMicActive(ok);
-        if (ok) {
-          triggerToast("✓ MICROFONO ATTIVO (Reazione armonica frequenze)");
-        } else {
-          triggerToast("⚠️ Permesso microfono negato o non supportato nel browser", true);
-        }
-      } else {
-        activeEngine.stopMicrophone();
-        setIsMicActive(false);
-        triggerToast("MICROFONO DISATTIVATO");
-      }
-    }
-  };
-
-  const handleToggleMidi = async () => {
-    const ok = await globalPiano.initMidi();
-    setIsMidiConnected(ok);
-    setMidiName(globalPiano.midiDeviceName);
-    if (ok) {
-      triggerToast(`✓ MIDI ATTIVO PER LOGIC PRO: ${globalPiano.midiDeviceName}`);
-    } else {
-      triggerToast(`⚠️ MIDI: ${globalPiano.midiDeviceName} (attiva il Driver IAC in Configurazione Audio MIDI)`, true);
-    }
-  };
-
-  const handleResetCamera = () => {
-    const activeEngine = engineMode === 'MOTHER' ? motherEngineRef.current : remasteredEngineRef.current;
-    if (activeEngine && activeEngine.camera) {
-      activeEngine.camera.position.set(0, 0, 600);
-      activeEngine.camera.lookAt(0, 0, 0);
-    }
-  };
-
-  const handleSnapshot = () => {
-    const activeEngine = engineMode === 'MOTHER' ? motherEngineRef.current : remasteredEngineRef.current;
-    if (activeEngine && activeEngine.renderer && activeEngine.scene && activeEngine.camera) {
-      activeEngine.renderer.render(activeEngine.scene, activeEngine.camera);
-      const a = document.createElement('a');
-      a.download = `NebulaCore_${engineMode}_${Date.now()}.png`;
-      a.href = activeEngine.renderer.domElement.toDataURL('image/png');
-      a.click();
-    }
-  };
-
-  const handleToggleRecording = async () => {
-    const activeEngine = engineMode === 'MOTHER' ? motherEngineRef.current : remasteredEngineRef.current;
-    if (!activeEngine || !activeEngine.renderer) return;
-
-    if (!isRecording) {
-      const ok = globalVideoRecorder.startRecording(activeEngine.renderer.domElement);
-      if (ok) setIsRecording(true);
-    } else {
-      try {
-        const session = await globalVideoRecorder.stopRecording();
-        setIsRecording(false);
-        setRecordedSession(session);
-      } catch (err) {
-        console.error("Recording stop error", err);
-        setIsRecording(false);
-      }
-    }
-  };
-
-  const handleApplyPreset = (preset: CustomPreset) => {
-    handleSelectVersion(preset.version);
-    if (preset.params) {
-      handleUpdateParams(preset.params);
-    }
-  };
-
-  return (
-    <div className="relative w-full h-full overflow-hidden bg-[#020905]">
-      {/* 3D WebGL Canvas Container */}
-      <div
-        ref={containerRef}
-        id="canvas-container"
-        className="absolute inset-0 w-full h-full z-0 touch-none"
-      />
-
-      {/* TOP BAR CONTRACT: Single Row, 3 Zones */}
-      <header
-        id="top-bar"
-        className="fixed top-2.5 left-1/2 -translate-x-1/2 z-40 flex items-center justify-between gap-4 md:gap-8 px-4 py-2 bg-[#030d07]/90 border border-[#00aa55] rounded-full backdrop-blur-xl shadow-[0_0_25px_rgba(0,255,136,0.2)]"
-      >
-        {/* Zone 1: Single text element wordmark */}
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
-          <span className="font-mono font-black text-xs md:text-sm tracking-wider text-[#00e5ff] drop-shadow-[0_0_10px_rgba(0,229,255,0.7)]">
-            NEBULA CORE
-          </span>
-          <span className="bg-[#00ff88]/20 border border-[#00ff88] text-[#00ff88] text-[9.5px] px-2 py-0.5 rounded-full font-bold">
-            {currentV}
-          </span>
-        </div>
-
-        {/* Zone 2: Navigation & Mode Controls */}
-        <nav className="flex items-center gap-2 md:gap-3 whitespace-nowrap shrink-0 text-xs font-mono">
-          {/* SACRED MOTHER CODE TOGGLE */}
-          <button
-            onClick={() => setEngineMode(engineMode === 'MOTHER' ? 'REMASTERED' : 'MOTHER')}
-            className={`px-3 py-1 rounded-full font-extrabold text-[10px] md:text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
-              engineMode === 'MOTHER'
-                ? 'bg-[#ffcc00] text-black border-[#ffcc00] shadow-[0_0_15px_rgba(255,204,0,0.8)]'
-                : 'bg-[#002b15] text-[#00ff88] border-[#00aa55] hover:bg-[#00ff88] hover:text-black'
-            }`}
-            title="Passa all'istante tra la Versione Madre Sacra V70.0 e la Remastered"
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>{engineMode === 'MOTHER' ? '★ ORIGINAL V70 MOTHER' : '⚡ REMASTERED'}</span>
-          </button>
-
-          {/* ECO / ULTRA QUICK TOGGLE */}
-          <button
-            onClick={() => {
-              const target = simulationParams.particleCount > 10000 ? 8000 : 20000;
-              handleUpdateParams({ particleCount: target });
-            }}
-            className="px-2.5 py-1 rounded-full bg-[#001f10] border border-[#007733] text-[10px] text-[#88ffaa] hover:border-[#00ff88] hover:text-white transition-all cursor-pointer"
-          >
-            {simulationParams.particleCount <= 8000 ? 'ECO 8K' : simulationParams.particleCount >= 20000 ? 'ULTRA 20K' : `${Math.round(simulationParams.particleCount/1000)}K`}
-          </button>
-
-          {/* WEBCAM TOGGLE */}
-          <button
-            onClick={handleToggleWebcam}
-            className={`px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 cursor-pointer transition-all border ${
-              isWebcamActive
-                ? 'bg-[#00ff88] text-black font-bold border-[#00ff88] shadow-[0_0_12px_rgba(0,255,136,0.8)]'
-                : 'bg-[#002211] text-[#00e5ff] border-[#00aa55] hover:border-[#00e5ff]'
-            }`}
-          >
-            <Camera className="w-3 h-3" />
-            <span>CAM: {isWebcamActive ? 'ON' : 'OFF'}</span>
-          </button>
-
-          {/* MIC AUDIO INPUT TOGGLE */}
-          <button
-            onClick={handleToggleMic}
-            className={`px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 cursor-pointer transition-all border ${
-              isMicActive
-                ? 'bg-[#00ff88] text-black font-bold border-[#00ff88] shadow-[0_0_12px_rgba(0,255,136,0.8)]'
-                : 'bg-[#002211] text-[#88ffaa] border-[#00aa55] hover:border-[#00ff88]'
-            }`}
-          >
-            <Mic className="w-3 h-3" />
-            <span>MIC: {isMicActive ? 'ON' : 'OFF'}</span>
-          </button>
-
-          {/* MIDI OUT / LOGIC PRO CONNECTOR */}
-          <button
-            onClick={handleToggleMidi}
-            className={`px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 cursor-pointer transition-all border ${
-              isMidiConnected
-                ? 'bg-[#00e5ff] text-black font-bold border-[#00e5ff] shadow-[0_0_12px_rgba(0,229,255,0.8)]'
-                : 'bg-[#001d24] text-[#00e5ff] border-[#007788] hover:border-[#00e5ff]'
-            }`}
-            title={`MIDI Out per Logic Pro: ${midiName}`}
-          >
-            <Radio className="w-3 h-3" />
-            <span>MIDI: {isMidiConnected ? 'LOGIC PRO (IAC)' : 'MIDI OUT'}</span>
-          </button>
-
-          {/* PRESETS MODAL TRIGGER */}
-          <button
-            onClick={() => setIsPresetModalOpen(true)}
-            className="px-2.5 py-1 rounded-full bg-[#002211] border border-[#00aa55] text-[10px] text-[#88ffaa] hover:border-[#00ff88] hover:text-white flex items-center gap-1 cursor-pointer"
-          >
-            <Sparkles className="w-3 h-3 text-[#00e5ff]" />
-            <span>PRESETS</span>
-          </button>
-
-          {/* DOWNLOAD PORTAL MODAL TRIGGER */}
-          <button
-            onClick={() => setIsDownloadPortalOpen(true)}
-            className="px-2.5 py-1 rounded-full bg-gradient-to-r from-[#00381e] to-[#002a3a] border border-[#00ff88] text-[10px] text-[#00ff88] hover:text-white hover:shadow-[0_0_12px_rgba(0,255,136,0.35)] cursor-pointer"
-            title="Portale Download Ufficiali (Android, Mac, PC, iPhone)"
-          >
-            <Download className="w-3 h-3 text-[#00ff88]" />
-            <span>DOWNLOAD APP</span>
-          </button>
-
-          {/* SNAPSHOT */}
-          <button
-            onClick={handleSnapshot}
-            className="px-2.5 py-1 rounded-full bg-[#002211] border border-[#00aa55] text-[10px] text-[#88ffaa] hover:text-white cursor-pointer"
-            title="Scatta screenshot PNG"
-          >
-            📸 PNG
-          </button>
-
-          {/* RESET CAMERA */}
-          <button
-            onClick={handleResetCamera}
-            className="p-1 rounded-full bg-[#002211] border border-[#00aa55] text-[#88ffaa] hover:text-white cursor-pointer"
-            title="Reimposta visuale camera"
-          >
-            <RotateCcw className="w-3 h-3" />
-          </button>
-        </nav>
-
-        {/* Zone 3: Primary Action (Fullscreen & Video Recording Session) */}
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
-          <button
-            onClick={handleToggleFullscreen}
-            className="p-1.5 rounded-full bg-[#002211] border border-[#00aa55] text-[#00ff88] hover:text-white hover:border-[#00ff88] cursor-pointer transition-colors"
-            title={isFullscreen ? "Esci da Schermo Intero" : "Attiva Schermo Intero"}
-          >
-            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            onClick={handleToggleRecording}
-            className={`px-3 py-1.5 rounded-full font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all ${
-              isRecording
-                ? 'bg-[#ff3333] text-white shadow-[0_0_18px_#ff3333] animate-pulse'
-                : 'bg-gradient-to-r from-[#00ff88] to-[#00e5ff] text-[#020905] hover:opacity-90 shadow-[0_0_12px_rgba(0,255,136,0.5)]'
-            }`}
-          >
-            {isRecording ? <Square className="w-3 h-3 fill-current" /> : <Video className="w-3 h-3" />}
-            <span>{isRecording ? `REC ${String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:${String(recordSeconds % 60).padStart(2, '0')}` : 'REC VIDEO'}</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Dynamic System Toast Notification */}
-      {toastMessage && (
-        <div className={`fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 rounded-full text-xs font-mono font-bold flex items-center gap-2 shadow-xl backdrop-blur-md transition-all ${
-          toastMessage.isError
-            ? 'bg-[#330000]/90 border border-[#ff3333] text-[#ff8888] shadow-[#ff0000]/20'
-            : 'bg-[#002b15]/90 border border-[#00ff88] text-[#00ff88] shadow-[#00ff88]/20'
-        }`}>
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
-
-      {/* Floating Picture-In-Picture Webcam Window */}
-      <PipPreview
-        isWebcamActive={isWebcamActive}
-        onToggleWebcam={handleToggleWebcam}
-      />
-
-      <SleepStudioPanel />
-
-      {/* Collapsible Bottom Console Panel (6 comprehensive tabs) */}
-      {engineMode === 'REMASTERED' && (
-        <ConsolePanel
-          params={simulationParams}
-          currentV={currentV}
-          isCycleActive={isCycleActive}
-          currentGeoType={currentGeoType}
-          onUpdateParams={handleUpdateParams}
-          onSelectVersion={handleSelectVersion}
-          onToggleCycle={handleToggleCycle}
-          onChangeGeoType={(geo) => {
-            setCurrentGeoType(geo);
-            if (remasteredEngineRef.current) remasteredEngineRef.current.setGeometryType(geo);
-          }}
-          onOpenDownloadPortal={() => setIsDownloadPortalOpen(true)}
-        />
-      )}
-
-      {/* Bottom Piano Strip with 15 pentatonic keys and reverb */}
-      <PianoRibbon activeNoteIdx={activeNoteIdx} />
-
-      {/* Preset Storage & Sharing Dialog */}
-      <PresetModal
-        isOpen={isPresetModalOpen}
-        onClose={() => setIsPresetModalOpen(false)}
-        currentVersion={currentV}
-        currentParams={simulationParams}
-        onApplyPreset={handleApplyPreset}
-      />
-
-      {/* Video Recording & Social Share Modal */}
-      <RecordingModal
-        session={recordedSession}
-        onClose={() => setRecordedSession(null)}
-      />
-
-      {/* Official Download & Offline Portal Modal */}
-      <DownloadPortalModal
-        isOpen={isDownloadPortalOpen}
-        onClose={() => setIsDownloadPortalOpen(false)}
-      />
-
-      {/* Shortcuts Helper Bar */}
-      <div className="fixed bottom-2 left-3 z-20 hidden lg:block text-[9px] font-mono text-[#44aa66] bg-[#020603]/80 px-2 py-0.5 rounded border border-[#00ff88]/20 pointer-events-none">
-        <b className="text-[#00e5ff]">[M]</b> Mother/Remaster | <b className="text-[#00e5ff]">[W]</b> Cam | <b className="text-[#00e5ff]">[C]</b> Cycle | <b className="text-[#00e5ff]">[CLICK/TOUCH]</b> Gesture
-      </div>
-    </div>
-  );
+export interface SolfeggioTone {
+  id: string;
+  name: string;
+  freq: number;
+  label: string;
+  description: string;
 }
 
+export const SOLFEGGIO_TONES: SolfeggioTone[] = [
+  { id: '174', name: '174 Hz', freq: 174, label: 'Sollievo & Sicurezza', description: 'Rilascio tensioni fisiche e radicamento profondo' },
+  { id: '285', name: '285 Hz', freq: 285, label: 'Rigenerazione Quantica', description: 'Rinnovamento cellulare' },
+  { id: '396', name: '396 Hz', freq: 396, label: 'Liberazione & Pace', description: 'Dissolve ansia e tensioni' },
+  { id: '432', name: '432 Hz', freq: 432, label: 'Armonia Universale', description: 'Accordo aureo naturale' },
+  { id: '528', name: '528 Hz', freq: 528, label: 'Frequenza dei Miracoli', description: 'Chiarezza mentale e armonia' },
+  { id: '639', name: '639 Hz', freq: 639, label: 'Connessione & Cuore', description: 'Apertura empatica' },
+  { id: '852', name: '852 Hz', freq: 852, label: 'Intuizione & Spirito', description: 'Ordine superiore' },
+  { id: '963', name: '963 Hz', freq: 963, label: 'Coscienza Cosmica', description: 'Unione cosmica' },
+];
 
+export interface BinauralPreset {
+  id: string;
+  name: string;
+  band: 'Delta' | 'Theta' | 'Alpha';
+  beatFreq: number;
+  carrier: number;
+  description: string;
+}
 
+export const BINAURAL_PRESETS: BinauralPreset[] = [
+  { id: 'delta-deep', name: 'Delta (2.0 Hz)', band: 'Delta', beatFreq: 2.0, carrier: 180, description: 'Sonno profondo' },
+  { id: 'theta-meditation', name: 'Theta (6.0 Hz)', band: 'Theta', beatFreq: 6.0, carrier: 200, description: 'Meditazione profonda' },
+  { id: 'alpha-peace', name: 'Alpha (10.0 Hz)', band: 'Alpha', beatFreq: 10.0, carrier: 200, description: 'Calma vigile' },
+];
 
+export class RelaxationEngine {
+  private audioCtx: AudioContext | null = null;
+  private outputGain: GainNode | null = null;
+  private toneBusGain: GainNode | null = null;
+  private noiseBusGain: GainNode | null = null;
 
+  public isMuted = false;
+  public masterVolume = 1.0;
 
+  // Screenshot defaults for ZEN & SLEEP · SORGENTI CONTINUE
+  public activePresetId: ZenPresetId | null = null;
+  public toneFreq = 528;
+  public isToneActive = false;
 
+  public binauralHz = 6.0;
+  public binauralCarrier = 200;
+  public isBinauralActive = true;
 
+  public noiseMode: NoiseMode = 'OFF';
+  public isBowlActive = true;
+  public isBreathActive = false;
 
+  public toneVolume = 0.35; // 35%
+  public noiseVolume = 0.20; // 20%
 
+  public timerMinutes = 15;
+  public sleepTimerRemainingSec = 0;
+  public isTimerRunning = false;
+  private sleepTimerInterval: number | null = null;
+  private sleepTimerStartTimestamp = 0;
+  private sleepTimerInitialSec = 0;
 
+  // Running Web Audio nodes
+  private toneOsc: OscillatorNode | null = null;
+  private toneGain: GainNode | null = null;
 
+  private binLeftOsc: OscillatorNode | null = null;
+  private binRightOsc: OscillatorNode | null = null;
+  private binGain: GainNode | null = null;
 
+  private noiseSource: AudioBufferSourceNode | null = null;
+  private noiseFilter: BiquadFilterNode | null = null;
+  private noiseNodeGain: GainNode | null = null;
 
+  private bowlOscs: OscillatorNode[] = [];
+  private bowlLfo: OscillatorNode | null = null;
+  private bowlGain: GainNode | null = null;
 
+  private hasStartedDefaults = false;
 
+  public onTimerTick: ((remainingSec: number) => void) | null = null;
+  public onTimerComplete: (() => void) | null = null;
+  public onStateChange: (() => void) | null = null;
 
+  private emitChange() {
+    if (this.onStateChange) this.onStateChange();
+  }
 
+  private initContext() {
+    if (this.audioCtx) return;
+    try {
+      this.audioCtx = globalPiano.getContext();
+      if (!this.audioCtx) {
+        const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioCtx = new AudioCtxClass();
+      }
 
+      this.outputGain = this.audioCtx.createGain();
+      this.outputGain.gain.setValueAtTime(this.isMuted ? 0.0001 : this.masterVolume, this.audioCtx.currentTime);
 
+      this.toneBusGain = this.audioCtx.createGain();
+      this.toneBusGain.gain.setValueAtTime(this.toneVolume, this.audioCtx.currentTime);
 
+      this.noiseBusGain = this.audioCtx.createGain();
+      this.noiseBusGain.gain.setValueAtTime(this.noiseVolume, this.audioCtx.currentTime);
 
+      this.toneBusGain.connect(this.outputGain);
+      this.noiseBusGain.connect(this.outputGain);
 
+      const limiter = globalPiano.getAudioDestinationNode();
+      if (limiter && limiter.context === this.audioCtx) {
+        this.outputGain.connect(limiter);
+      } else {
+        this.outputGain.connect(this.audioCtx.destination);
+      }
+    } catch (e) {
+      console.warn("RelaxationEngine: AudioContext initialization deferred", e);
+    }
+  }
 
+  public async resume() {
+    this.initContext();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume();
+    }
+  }
 
+  public async unlockAndStartDefaults(muted: boolean) {
+    this.isMuted = muted;
+    await this.resume();
+    this.updateOutputGain();
+    if (!this.hasStartedDefaults) {
+      this.hasStartedDefaults = true;
+      this.syncNodesToState();
+    }
+  }
 
+  private updateOutputGain() {
+    if (!this.audioCtx || !this.outputGain) return;
+    const now = this.audioCtx.currentTime;
+    const target = this.isMuted ? 0.0001 : Math.max(0.0001, this.masterVolume);
+    this.outputGain.gain.cancelScheduledValues(now);
+    this.outputGain.gain.setTargetAtTime(target, now, 0.04);
+  }
 
+  public setMuted(muted: boolean) {
+    this.isMuted = muted;
+    this.updateOutputGain();
+  }
 
+  public setMasterVolume(vol: number) {
+    this.masterVolume = Math.max(0, Math.min(1, vol));
+    this.updateOutputGain();
+  }
 
+  private syncNodesToState() {
+    if (!this.audioCtx || this.audioCtx.state === 'suspended') return;
+    if (this.isToneActive) this.startToneNode(); else this.stopToneNode();
+    if (this.isBinauralActive) this.startBinauralNodes(); else this.stopBinauralNodes();
+    if (this.isBowlActive) this.startBowlNodes(); else this.stopBowlNodes();
+    if (this.noiseMode !== 'OFF') this.startNoiseNode(this.noiseMode); else this.stopNoiseNode();
+  }
 
+  // --- SOLFEGGIO / PURE TONE ---
+  private startToneNode() {
+    if (!this.audioCtx || !this.toneBusGain) return;
+    const now = this.audioCtx.currentTime;
+    if (this.toneOsc && this.toneGain) {
+      this.toneOsc.frequency.setTargetAtTime(this.toneFreq, now, 0.05);
+      return;
+    }
+    const osc = this.audioCtx.createOscillator();
+    const g = this.audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(this.toneFreq, now);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.28, now + 0.8);
+    osc.connect(g);
+    g.connect(this.toneBusGain);
+    osc.start(now);
+    this.toneOsc = osc;
+    this.toneGain = g;
+  }
 
+  private stopToneNode() {
+    if (!this.toneOsc || !this.toneGain || !this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    const osc = this.toneOsc;
+    const g = this.toneGain;
+    this.toneOsc = null;
+    this.toneGain = null;
+    try {
+      g.gain.setTargetAtTime(0.0001, now, 0.12);
+      setTimeout(() => { try { osc.stop(); osc.disconnect(); g.disconnect(); } catch (_) {} }, 500);
+    } catch (_) {}
+  }
 
+  public toggleTone() {
+    this.isToneActive = !this.isToneActive;
+    this.resume().then(() => {
+      if (this.isToneActive) this.startToneNode(); else this.stopToneNode();
+    });
+    this.emitChange();
+  }
 
+  public setToneFreq(hz: number) {
+    this.toneFreq = Math.max(100, Math.min(1000, hz));
+    if (this.toneOsc && this.audioCtx) {
+      this.toneOsc.frequency.setTargetAtTime(this.toneFreq, this.audioCtx.currentTime, 0.05);
+    }
+    this.emitChange();
+  }
 
+  // --- BINAURAL BEATS ---
+  private startBinauralNodes() {
+    if (!this.audioCtx || !this.toneBusGain) return;
+    const now = this.audioCtx.currentTime;
+    const leftF = this.binauralCarrier - this.binauralHz * 0.5;
+    const rightF = this.binauralCarrier + this.binauralHz * 0.5;
 
+    if (this.binLeftOsc && this.binRightOsc && this.binGain) {
+      this.binLeftOsc.frequency.setTargetAtTime(leftF, now, 0.06);
+      this.binRightOsc.frequency.setTargetAtTime(rightF, now, 0.06);
+      return;
+    }
 
+    const leftOsc = this.audioCtx.createOscillator();
+    const rightOsc = this.audioCtx.createOscillator();
+    leftOsc.type = 'sine';
+    rightOsc.type = 'sine';
+    leftOsc.frequency.setValueAtTime(leftF, now);
+    rightOsc.frequency.setValueAtTime(rightF, now);
 
+    const bGain = this.audioCtx.createGain();
+    bGain.gain.setValueAtTime(0.0001, now);
+    bGain.gain.linearRampToValueAtTime(0.32, now + 0.9);
 
+    if (this.audioCtx.createStereoPanner) {
+      const pL = this.audioCtx.createStereoPanner();
+      const pR = this.audioCtx.createStereoPanner();
+      pL.pan.setValueAtTime(-1.0, now);
+      pR.pan.setValueAtTime(1.0, now);
+      leftOsc.connect(pL);
+      rightOsc.connect(pR);
+      pL.connect(bGain);
+      pR.connect(bGain);
+    } else {
+      const merger = this.audioCtx.createChannelMerger(2);
+      leftOsc.connect(merger, 0, 0);
+      rightOsc.connect(merger, 0, 1);
+      merger.connect(bGain);
+    }
 
+    bGain.connect(this.toneBusGain);
+    leftOsc.start(now);
+    rightOsc.start(now);
 
+    this.binLeftOsc = leftOsc;
+    this.binRightOsc = rightOsc;
+    this.binGain = bGain;
+  }
 
+  private stopBinauralNodes() {
+    if (!this.binLeftOsc || !this.binGain || !this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    const l = this.binLeftOsc;
+    const r = this.binRightOsc;
+    const g = this.binGain;
+    this.binLeftOsc = null;
+    this.binRightOsc = null;
+    this.binGain = null;
+    try {
+      g.gain.setTargetAtTime(0.0001, now, 0.15);
+      setTimeout(() => {
+        try { l?.stop(); l?.disconnect(); r?.stop(); r?.disconnect(); g?.disconnect(); } catch (_) {}
+      }, 600);
+    } catch (_) {}
+  }
 
+  public toggleBinaural() {
+    this.isBinauralActive = !this.isBinauralActive;
+    this.resume().then(() => {
+      if (this.isBinauralActive) this.startBinauralNodes(); else this.stopBinauralNodes();
+    });
+    this.emitChange();
+  }
 
+  public setBinauralHz(hz: number) {
+    this.binauralHz = Math.max(0.5, Math.min(40, hz));
+    if (this.binLeftOsc && this.binRightOsc && this.audioCtx) {
+      const now = this.audioCtx.currentTime;
+      this.binLeftOsc.frequency.setTargetAtTime(this.binauralCarrier - this.binauralHz * 0.5, now, 0.06);
+      this.binRightOsc.frequency.setTargetAtTime(this.binauralCarrier + this.binauralHz * 0.5, now, 0.06);
+    }
+    this.emitChange();
+  }
 
+  // --- COLORED NOISE (BROWN / PINK / WHITE) ---
+  private createNoiseBuffer(mode: NoiseMode): AudioBuffer | null {
+    if (!this.audioCtx || mode === 'OFF') return null;
+    const bufferSize = this.audioCtx.sampleRate * 4;
+    const buffer = this.audioCtx.createBuffer(2, bufferSize, this.audioCtx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buffer.getChannelData(ch);
+      if (mode === 'BROWN') {
+        let lastOut = 0;
+        for (let i = 0; i < bufferSize; i++) {
+          const white = Math.random() * 2 - 1;
+          lastOut = (lastOut + 0.025 * white) / 1.025;
+          data[i] = lastOut * 3.2;
+        }
+      } else if (mode === 'PINK') {
+        let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+        for (let i = 0; i < bufferSize; i++) {
+          const white = Math.random() * 2 - 1;
+          b0 = 0.99886 * b0 + white * 0.0555179;
+          b1 = 0.99332 * b1 + white * 0.0750759;
+          b2 = 0.96900 * b2 + white * 0.1538520;
+          b3 = 0.86650 * b3 + white * 0.3104856;
+          b4 = 0.55000 * b4 + white * 0.5329522;
+          b5 = -0.7616 * b5 - white * 0.0168980;
+          data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+          b6 = white * 0.115926;
+        }
+      } else {
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = (Math.random() * 2 - 1) * 0.35;
+        }
+      }
+    }
+    return buffer;
+  }
 
+  private startNoiseNode(mode: NoiseMode) {
+    this.stopNoiseNode();
+    if (!this.audioCtx || !this.noiseBusGain || mode === 'OFF') return;
+    const buffer = this.createNoiseBuffer(mode);
+    if (!buffer) return;
+    const now = this.audioCtx.currentTime;
+    const src = this.audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
 
+    const filter = this.audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(mode === 'BROWN' ? 420 : mode === 'PINK' ? 1800 : 8000, now);
 
+    const g = this.audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.75, now + 0.9);
 
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(this.noiseBusGain);
+    src.start(now);
 
+    this.noiseSource = src;
+    this.noiseFilter = filter;
+    this.noiseNodeGain = g;
+  }
 
+  private stopNoiseNode() {
+    if (!this.noiseSource || !this.noiseNodeGain || !this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    const s = this.noiseSource;
+    const f = this.noiseFilter;
+    const g = this.noiseNodeGain;
+    this.noiseSource = null;
+    this.noiseFilter = null;
+    this.noiseNodeGain = null;
+    try {
+      g.gain.setTargetAtTime(0.0001, now, 0.15);
+      setTimeout(() => {
+        try { s.stop(); s.disconnect(); f?.disconnect(); g.disconnect(); } catch (_) {}
+      }, 600);
+    } catch (_) {}
+  }
 
+  public setNoiseMode(mode: NoiseMode) {
+    this.noiseMode = mode;
+    this.resume().then(() => {
+      if (mode === 'OFF') this.stopNoiseNode(); else this.startNoiseNode(mode);
+    });
+    this.emitChange();
+  }
 
+  // --- HARMONIC TIBETAN BOWL ---
+  private startBowlNodes() {
+    if (!this.audioCtx || !this.toneBusGain) return;
+    if (this.bowlOscs.length > 0 && this.bowlGain) return;
+    const now = this.audioCtx.currentTime;
+    const baseFreq = 108.0;
+    const partials: { ratio: number; gain: number; type: OscillatorType }[] = [
+      { ratio: 1.0, gain: 0.42, type: 'sine' },
+      { ratio: 2.76, gain: 0.20, type: 'sine' },
+      { ratio: 5.40, gain: 0.08, type: 'sine' },
+      { ratio: 0.5, gain: 0.28, type: 'triangle' },
+    ];
 
+    const masterBowlGain = this.audioCtx.createGain();
+    masterBowlGain.gain.setValueAtTime(0.0001, now);
+    masterBowlGain.gain.linearRampToValueAtTime(0.32, now + 1.4);
 
+    const lfo = this.audioCtx.createOscillator();
+    lfo.frequency.setValueAtTime(0.09, now);
+    const lfoGain = this.audioCtx.createGain();
+    lfoGain.gain.setValueAtTime(0.08, now);
+    lfo.connect(lfoGain);
+
+    const list: OscillatorNode[] = [];
+    partials.forEach(p => {
+      if (!this.audioCtx) return;
+      const osc = this.audioCtx.createOscillator();
+      const pg = this.audioCtx.createGain();
+      osc.type = p.type;
+      osc.frequency.setValueAtTime(baseFreq * p.ratio, now);
+      pg.gain.setValueAtTime(p.gain, now);
+      lfoGain.connect(pg.gain);
+      osc.connect(pg);
+      pg.connect(masterBowlGain);
+      osc.start(now);
+      list.push(osc);
+    });
+
+    lfo.start(now);
+    masterBowlGain.connect(this.toneBusGain);
+
+    this.bowlOscs = list;
+    this.bowlLfo = lfo;
+    this.bowlGain = masterBowlGain;
+  }
+
+  private stopBowlNodes() {
+    if (this.bowlOscs.length === 0 || !this.bowlGain || !this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    const oscs = [...this.bowlOscs];
+    const lfo = this.bowlLfo;
+    const g = this.bowlGain;
+    this.bowlOscs = [];
+    this.bowlLfo = null;
+    this.bowlGain = null;
+    try {
+      g.gain.setTargetAtTime(0.0001, now, 0.2);
+      setTimeout(() => {
+        try {
+          oscs.forEach(o => { o.stop(); o.disconnect(); });
+          lfo?.stop(); lfo?.disconnect(); g.disconnect();
+        } catch (_) {}
+      }, 800);
+    } catch (_) {}
+  }
+
+  public toggleBowl() {
+    this.isBowlActive = !this.isBowlActive;
+    this.resume().then(() => {
+      if (this.isBowlActive) this.startBowlNodes(); else this.stopBowlNodes();
+    });
+    this.emitChange();
+  }
+
+  public toggleBreath() {
+    this.isBreathActive = !this.isBreathActive;
+    this.emitChange();
+  }
+
+  public getBreathFactor(timeSec: number): number {
+    if (!this.isBreathActive) return 0;
+    // 12-second smooth inhale-hold-exhale cycle
+    const phase = (timeSec % 12) / 12;
+    return Math.sin(phase * Math.PI * 2);
+  }
+
+  // --- VOLUMES ---
+  public setToneVolume(vol: number) {
+    this.toneVolume = Math.max(0, Math.min(1, vol));
+    if (this.toneBusGain && this.audioCtx) {
+      this.toneBusGain.gain.setTargetAtTime(this.toneVolume, this.audioCtx.currentTime, 0.05);
+    }
+    this.emitChange();
+  }
+
+  public setNoiseVolume(vol: number) {
+    this.noiseVolume = Math.max(0, Math.min(1, vol));
+    if (this.noiseBusGain && this.audioCtx) {
+      this.noiseBusGain.gain.setTargetAtTime(this.noiseVolume, this.audioCtx.currentTime, 0.05);
+    }
+    this.emitChange();
+  }
+
+  // --- ZEN PRESET CHIPS ---
+  public applyZenPreset(presetId: ZenPresetId) {
+    this.activePresetId = presetId;
+    if (presetId === 'DELTA_BROWN') {
+      this.isToneActive = false;
+      this.isBinauralActive = true;
+      this.binauralHz = 2.0;
+      this.noiseMode = 'BROWN';
+      this.isBowlActive = false;
+    } else if (presetId === 'HZ_432') {
+      this.toneFreq = 432;
+      this.isToneActive = true;
+      this.isBinauralActive = false;
+      this.noiseMode = 'OFF';
+      this.isBowlActive = false;
+    } else if (presetId === 'HZ_528') {
+      this.toneFreq = 528;
+      this.isToneActive = true;
+      this.isBinauralActive = false;
+      this.noiseMode = 'OFF';
+      this.isBowlActive = false;
+    } else if (presetId === 'BOWL_THETA') {
+      this.isToneActive = false;
+      this.isBinauralActive = true;
+      this.binauralHz = 6.0;
+      this.noiseMode = 'OFF';
+      this.isBowlActive = true;
+    }
+    this.resume().then(() => this.syncNodesToState());
+    this.emitChange();
+  }
+
+  public applyDefaults(syncRunningAudio = true) {
+    this.activePresetId = null;
+    this.toneFreq = 528;
+    this.isToneActive = false;
+    this.binauralHz = 6.0;
+    this.isBinauralActive = true;
+    this.noiseMode = 'OFF';
+    this.isBowlActive = true;
+    this.isBreathActive = false;
+    this.toneVolume = 0.35;
+    this.noiseVolume = 0.20;
+    this.timerMinutes = 15;
+    if (syncRunningAudio && this.audioCtx && this.audioCtx.state === 'running') {
+      this.setToneVolume(0.35);
+      this.setNoiseVolume(0.20);
+      this.syncNodesToState();
+    }
+    this.emitChange();
+  }
+
+  // --- SLEEP TIMER ---
+  public setTimerMinutes(minutes: number) {
+    this.timerMinutes = minutes;
+    this.emitChange();
+  }
+
+  public startSleepTimer(minutes?: number) {
+    if (minutes !== undefined) this.timerMinutes = minutes;
+    if (this.sleepTimerInterval !== null) {
+      window.clearInterval(this.sleepTimerInterval);
+      this.sleepTimerInterval = null;
+    }
+    if (this.timerMinutes <= 0) {
+      this.isTimerRunning = false;
+      this.sleepTimerRemainingSec = 0;
+      this.emitChange();
+      return;
+    }
+
+    const totalSec = this.timerMinutes * 60;
+    this.sleepTimerInitialSec = totalSec;
+    this.sleepTimerRemainingSec = totalSec;
+    this.sleepTimerStartTimestamp = Date.now();
+    this.isTimerRunning = true;
+    if (this.onTimerTick) this.onTimerTick(totalSec);
+    this.emitChange();
+
+    this.sleepTimerInterval = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - this.sleepTimerStartTimestamp) / 1000);
+      const rem = Math.max(0, this.sleepTimerInitialSec - elapsed);
+      this.sleepTimerRemainingSec = rem;
+      if (this.onTimerTick) this.onTimerTick(rem);
+
+      const fadeWindow = Math.min(60, Math.floor(this.sleepTimerInitialSec * 0.25));
+      if (rem <= fadeWindow && this.outputGain && this.audioCtx && !this.isMuted) {
+        const factor = Math.max(0.0001, rem / Math.max(1, fadeWindow));
+        this.outputGain.gain.setTargetAtTime(this.masterVolume * factor, this.audioCtx.currentTime, 0.3);
+      }
+
+      if (rem <= 0) {
+        this.stopAllRelaxation();
+        this.stopSleepTimer();
+        if (this.onTimerComplete) this.onTimerComplete();
+      }
+    }, 1000);
+  }
+
+  public stopSleepTimer() {
+    if (this.sleepTimerInterval !== null) {
+      window.clearInterval(this.sleepTimerInterval);
+      this.sleepTimerInterval = null;
+    }
+    this.isTimerRunning = false;
+    this.sleepTimerRemainingSec = 0;
+    this.updateOutputGain();
+    this.emitChange();
+  }
+
+  public stopAllRelaxation() {
+    this.isToneActive = false;
+    this.isBinauralActive = false;
+    this.isBowlActive = false;
+    this.noiseMode = 'OFF';
+    this.stopToneNode();
+    this.stopBinauralNodes();
+    this.stopBowlNodes();
+    this.stopNoiseNode();
+    this.emitChange();
+  }
+
+  public dispose() {
+    this.stopAllRelaxation();
+    this.stopSleepTimer();
+  }
+}
+
+export const globalRelaxation = new RelaxationEngine();
